@@ -1,10 +1,12 @@
 import json
 import logging
+import os
 from pydantic import BaseModel
 
 from langchain_core.tools import StructuredTool
 
 from app.services.rag import query_normative_documents
+from app.services.parallel_search import parallel_web_search
 from app.services.brave_search import (
     brave_web_search,
     format_search_results_for_llm,
@@ -37,8 +39,14 @@ def make_rules_coroutine():
 
 def make_travel_search_coroutine():
     async def call_travel_search(text: str) -> str:
-        """Busca vuelos, hoteles, opciones de transporte y viaje usando Brave Search."""
-        if not is_brave_available():
+        """Busca vuelos, hoteles, transporte y viajes con el proveedor elegido."""
+        provider = os.getenv("TRAVEL_SEARCH_PROVIDER", "brave").strip().lower()
+        if provider not in {"brave", "parallel"}:
+            return json.dumps({
+                "query": text, "results": [],
+                "error": "TRAVEL_SEARCH_PROVIDER must be brave or parallel.",
+            }, ensure_ascii=False)
+        if provider == "brave" and not is_brave_available():
             logger.warning(
                 "travel_search tool called but BRAVE_API_KEY is not configured"
             )
@@ -59,10 +67,11 @@ def make_travel_search_coroutine():
         # Para entradas muy cortas (< 4 palabras) se añade una pista de contexto de viaje.
         words = text.split()
         search_query = text if len(words) >= 4 else f"{text} travel"
-        logger.info("travel_search tool: searching Brave for %r", search_query)
+        logger.info("travel_search tool: searching %s for %r", provider, search_query)
 
         try:
-            result = await brave_web_search(search_query, count=5)
+            search = parallel_web_search if provider == "parallel" else brave_web_search
+            result = await search(search_query, count=5)
             return format_search_results_for_llm(result)
         except Exception as e:
             logger.exception("Error executing travel_search tool")

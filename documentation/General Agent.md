@@ -20,7 +20,7 @@ flowchart TD
 
     subgraph localTools ["Herramientas Locales (app/agents/general/tools.py)"]
         rules["rules\n(RAG sobre ChromaDB)"]
-        travel_search["travel_search\n(Brave Search)"]
+        travel_search["travel_search\n(Brave o Parallel)"]
     end
 
     subgraph ragLayer ["Capa RAG (app/services/rag.py)"]
@@ -56,7 +56,7 @@ flowchart TD
 ### Comportamiento del agente
 
 - Creado mediante `create_agent(llm, tools, system_prompt=...)`.
-- Recibe exclusivamente sus 2 herramientas locales (`rules` y `travel_search`), sin acceso a herramientas MCP.
+- Recibe exclusivamente sus 2 herramientas locales (`rules` y `travel_search`), sin acceso a las herramientas MCP de finanzas o recordatorios. `travel_search` puede usar internamente Parallel MCP.
 - Sin estado (stateless): sin checkpointer interno. La memoria e historial conversacional son inyectados como contexto por el orquestador.
 
 ### Directrices del prompt de sistema (`prompts.py`)
@@ -64,7 +64,7 @@ flowchart TD
 El prompt se genera dinámicamente mediante `get_general_system_prompt()`, inyectando el contexto de fecha/hora actual desde `app/utils/date_resolution.py`.
 
 1. **Herramienta `rules` obligatoria**: para cualquier consulta sobre visados, pasaportes, requisitos de entrada, documentación, vacunas, normativa COVID, seguridad o cualquier información normativa de viaje, se DEBE llamar a `rules`. La respuesta debe basarse exclusivamente en lo devuelto por la herramienta, sin añadir conocimiento externo.
-2. **Herramienta `travel_search`**: para consultas sobre vuelos, hoteles, transporte, rutas o planificación de viaje. Usa Brave Search en tiempo real.
+2. **Herramienta `travel_search`**: para consultas sobre vuelos, hoteles, transporte, rutas o planificación de viaje. Usa Brave Search por defecto o Parallel si se selecciona explícitamente.
 3. **Restricción europea estricta**: si el usuario consulta normativas de países no europeos y la consulta llega al agente, responde amablemente indicando que solo soporta regulaciones de destinos europeos.
 4. **Respuesta fundamentada**: si la herramienta indica que la documentación es insuficiente, comunicarlo claramente. No inventar requisitos específicos de país.
 5. **Multilingüe**: responder en el mismo idioma del usuario.
@@ -90,14 +90,48 @@ El prompt se genera dinámicamente mediante `get_general_system_prompt()`, inyec
 | Campo | Detalle |
 |-------|---------|
 | **Tipo** | Herramienta local asíncrona |
-| **Backend** | Brave Search REST API (`api.search.brave.com`) |
+| **Backend** | Brave Search REST API por defecto; Parallel Search MCP opcional |
 | **Parámetro** | `text` (str) — la consulta de planificación de viaje del usuario |
-| **Configuración** | Requiere `BRAVE_API_KEY` en `.env`. Opcionalmente `BRAVE_SEARCH_COUNT` (default: 5) |
+| **Configuración** | `TRAVEL_SEARCH_PROVIDER=brave` (default) requiere `BRAVE_API_KEY`; `parallel` no requiere clave de búsqueda. La herramienta solicita 5 resultados |
 | **Query** | Si la consulta tiene ≥ 4 palabras, se usa tal cual. Si es más corta, se añade el sufijo `travel` para contextualizar |
 | **Retorna** | JSON con `{"query": "...", "results": [{title, url, description}, ...], "total": N}` |
-| **Fallback** | Si `BRAVE_API_KEY` no está configurada, retorna un JSON con `warning` explicando la limitación (sin crash) |
+| **Fallback** | Con Brave, si `BRAVE_API_KEY` no está configurada, retorna un JSON con `warning` explicando la limitación (sin crash) |
 | **Error handling** | Captura `TimeoutException`, `HTTPStatusError` y errores genéricos retornando `{"error": "..."}` |
 | **Restricción** | Estrictamente de **solo lectura** para planificar y buscar información. No puede reservar, comprar ni registrar billetes o estadías |
+
+---
+
+### Parallel (opcional)
+
+En `.env`, añade `TRAVEL_SEARCH_PROVIDER=parallel` y reinicia el backend.
+No necesita `BRAVE_API_KEY` ni `PARALLEL_API_KEY`. El cliente usa exclusivamente
+`https://search.parallel.ai/mcp` por Streamable HTTP y no modifica `MCP_SERVERS`.
+La búsqueda anónima usa modo Fast y tiene límites de uso; un error o una cuota
+agotada se devuelve como `error`, sin cambiar a Brave. El plazo total es de 20 segundos.
+Brave sigue siendo el valor predeterminado y un valor de proveedor desconocido
+produce un error de configuración.
+
+Tras instalar `requirements.txt`, prueba la herramienta registrada sin arrancar
+los servidores ni usar inferencia LLM:
+
+```bash
+TRAVEL_SEARCH_PROVIDER=parallel python - <<'PY'
+import asyncio
+from app.agents.general.tools import get_general_tools
+
+async def main():
+    search = next(tool for tool in get_general_tools() if tool.name == "travel_search")
+    print(await search.ainvoke({"text": "tren Madrid Barcelona horarios oficiales"}))
+
+asyncio.run(main())
+PY
+```
+
+La respuesta conserva `query`, `results` (con `title`, `url`, `description`) y `total`.
+Los extractos de Parallel se convierten en `description`. Las consultas de normativa
+siguen usando exclusivamente `rules` y los documentos RAG europeos. La búsqueda
+solo devuelve información y enlaces, no confirma precios ni disponibilidad en vivo
+ni realiza reservas. Más detalles: [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp).
 
 ---
 
@@ -123,7 +157,7 @@ Los guardrails de idioma e inyección están centralizados en `app/agents/orches
 
 ## Configuración
 
-No requiere variables de entorno adicionales específicas. El directorio de ChromaDB (`app/chromadb_store/`) y los documentos RAG (`rag_docs/`) deben estar presentes y populados.
+Selecciona el proveedor con `TRAVEL_SEARCH_PROVIDER` según la sección anterior. El directorio de ChromaDB (`app/chromadb_store/`) y los documentos RAG (`rag_docs/`) deben estar presentes y populados.
 
 ---
 

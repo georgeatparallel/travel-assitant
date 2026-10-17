@@ -6,7 +6,7 @@ This document defines the formal specification, architecture, and behavioral gui
 
 ## 1. Architectural Overview
 
-The General Agent is a specialist sub-agent instantiated when the Supervisor routes a query with `[ROUTE: general]`. It manages general support, travel documentation requirements, and real-time travel planning queries (flights, hotels, transport) via Brave Search. It utilizes a local vector database for Retrieval-Augmented Generation (RAG) and the Brave Search REST API:
+The General Agent is a specialist sub-agent instantiated when the Supervisor routes a query with `[ROUTE: general]`. It manages general support, travel documentation requirements, and real-time travel planning queries (flights, hotels, transport) via Brave Search (default) or opt-in Parallel Search MCP. It utilizes a local vector database for Retrieval-Augmented Generation (RAG) and the selected web search backend:
 
 ```mermaid
 graph TD
@@ -39,7 +39,7 @@ The General Agent exposes two local tools defined in `app/agents/general/tools.p
 | Tool | Required Parameters | Purpose |
 | :--- | :--- | :--- |
 | `rules` | `text` (str) | Queries RAG vector database for travel regulations (visas, passports, health alerts) |
-| `travel_search` | `text` (str) | Real-time web search for flights, hotels, transport and travel planning via Brave Search |
+| `travel_search` | `text` (str) | Real-time web search for flights, hotels, transport and travel planning via Brave Search (default) or Parallel |
 
 ---
 
